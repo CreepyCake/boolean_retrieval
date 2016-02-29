@@ -1,126 +1,118 @@
-require "unicode"
+require 'unicode'
 class String
-
   #methods for enabling unicode downcase and upcase
   def downcase
     Unicode::downcase(self)
   end
-  def downcase!
-    self.replace downcase
-  end
-  def upcase
-    Unicode::upcase(self)
-  end
-  def upcase!
-    self.replace upcase
-  end
-  def capitalize
-    Unicode::capitalize(self)
-  end
-  def capitalize!
-    self.replace capitalize
-  end
-
-  #methods for deciding if word is from initial text: it must contain only cyrillic symbols,
-  #or only latin symbols or it must be a number
-  def sanitize
-    self.split('').collect do |token|
-      token.gsub(/[^-<>A-Za-zА-Яа-я0-9]/, '')
-    end
-  end
-
-  def regulars
-    if self =~ /^</ or self =~ />$/
-      self.gsub(/[^'']/, '')
-    elsif self =~ /^[A-Za-z]/ and self =~ /[А-Яа-я0-9]/
-      self.gsub(/[^'']/, '')
-    elsif self =~ /^[А-Яа-я]/ and self =~ /[A-Za-z0-9]/
-      self.gsub(/[^'']/, '')
-    elsif self =~ /^[0-9]/ and self =~ /[A-Za-zА-Яа-я]/
-      self.gsub(/[^'']/, '')
-    else
-      self
-    end
-  end
-
 end
 
-#class that makes all the work
-class InvertedIndex
-
-  attr_accessor :args, :data, :doc_number, :token_sum, :token_number
-
-  def initialize (args, index_filename, data={}, doc_number=1, in_text=false, token_sum=0, token_number=0)
-    @args = args
-    @doc_number = doc_number
-    @in_text = in_text
-    @token_sum = token_sum
-    @token_number = token_number
-    @data = data
-    @index_filename = index_filename
+class Array
+  #redefining boolean operators for arrays of documents
+  def and(operand)
+    self & operand
   end
 
-  #if we already have an index file, than we can just reopen it
-  def open_index
-    if File.exist? @index_filename
-      @data = Marshal.load open(@index_filename)
-    else
-      @data = {}
-    end
+  def or(operand)
+    self | operand
   end
 
-  #parse words and write to hash pairs <word, document number>
-  def parse
-    @args.each do |filename|
-      open(filename) do |file|
-        file.read.split.each do |word|
-          if word.include? "Section" #beginning or end of a text
-            @in_text = !@in_text
-          end
-          if word.include? "</p>" #we break texts into documents that are located between </p> tags
-            @doc_number += 1
-          end
-          @token_sum += word.length
-          @token_number += 1
-          if @in_text and word.length >= 3
-            word = word.downcase.sanitize.join.regulars #process the word
-            @data[word] ||= [] #we either have some record in hash with that key or we don't
-            @data[word] << @doc_number unless @data[word].include? @doc_number #don't make record
-                                                   # if we already met this word in this document
-          end
-        end
+  def not(operand)
+    operand - self
+  end
+end
+
+#we get infix expression and convert it into RPN
+class RPNExpression
+
+  # Set up the table of known operators
+  Operator = Struct.new(:precedence, :associativity)
+  class Operator
+    def left_associative?; associativity == :left; end
+    def <(other)
+      if left_associative?
+        precedence <= other.precedence
+      else
+        precedence < other.precedence
       end
-      @doc_number += 1
     end
   end
 
-  #marshal index into file
-  def write_index
-    open(@index_filename, "w") do |index|
-      index.write Marshal.dump(@data)
+  Operators = {
+      "and" => Operator.new(2, :left),
+      "or" => Operator.new(2, :left),
+      "not" => Operator.new(3, :right),
+  }
+
+  # create a new object
+  def initialize(str)
+    @expression = str
+  end
+  attr_reader :expression
+
+  def self.from_infix(expression)
+    rpn_expr = []
+    op_stack = []
+    tokens = expression.split
+    until tokens.empty?
+      term = tokens.shift
+
+      if Operators.has_key?(term)
+        op2 = op_stack.last
+        if Operators.has_key?(op2) and Operators[term] < Operators[op2]
+          rpn_expr << op_stack.pop
+        end
+        op_stack << term
+
+      elsif term == "("
+        op_stack << term
+
+      elsif term == ")"
+        until op_stack.last == "("
+          rpn_expr << op_stack.pop
+        end
+        op_stack.pop
+
+      else
+        rpn_expr << term
+      end
     end
+    until op_stack.empty?
+      rpn_expr << op_stack.pop
+    end
+    obj = self.new(rpn_expr.join(" "))
+    obj.to_s
   end
 
-  def create_inverted_index
-    self.open_index
-    self.parse
-    self.write_index
+  def to_s
+    expression
   end
-
 end
 
-start = Time.now
+#parse RPN expression and evaluate it
+class RPNParser
 
-inverted_index = InvertedIndex.new(ARGV, "index.dat")
-inverted_index.create_inverted_index
-term_sum = inverted_index.data.keys.inject(0) {|sum, key| sum + key.length} #for calculation of
-                                                                           # the average term length
+  def initialize(filename)
+    @data = Marshal.load open(filename)
+  end
 
-finish = Time.now
+  def evaluate(expression)
+    expression = expression.split
+    operands = []
+    evaluation = []
 
-puts "Documents = #{inverted_index.doc_number}"
-puts "Tokens = #{inverted_index.token_number}"
-puts "Terms = #{inverted_index.data.length}"
-puts "Average length of tokens = #{inverted_index.token_sum.to_f / inverted_index.token_number.to_f}"
-puts "Average length of terms = #{term_sum.to_f / inverted_index.data.length.to_f}"
-puts "Elapsed time = #{finish-start} seconds"
+    expression.each do |x|
+      case x
+        when "and", "or"
+          operands = evaluation.pop(2)
+          evaluation.push(operands[0].send(x, operands[1]))
+        when "not"
+          operands = evaluation.pop
+          docs = @data.values.max[0]
+          evaluation.push(operands.send(x, (1..docs).to_a))
+        when /[A-Za-zА-Яа-я0-9]/
+          @data[x.downcase].nil? ? evaluation.push([]) : evaluation.push(@data[x.downcase])
+      end
+    end
+    evaluation.pop
+  end
+end

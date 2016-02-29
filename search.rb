@@ -1,42 +1,16 @@
 require 'unicode'
+require_relative 'parser'
 
-class String
-  def downcase
-    Unicode::downcase(self)
-  end
-  def downcase!
-    self.replace downcase
-  end
-  def upcase
-    Unicode::upcase(self)
-  end
-  def upcase!
-    self.replace upcase
-  end
-  def capitalize
-    Unicode::capitalize(self)
-  end
-  def capitalize!
-    self.replace capitalize
-  end
 
-  def index_sanitize
-    self.split.collect do |token|
-      token.downcase.gsub(/[^А-Яа-я]/, '')
-    end
+while (1)
+  puts 'Input boolean queries or type \'exit\' to exit'
+  str = gets.chomp.encode('UTF-8')
+  if str.empty?
+    next
   end
+  break if str == 'exit'
+  rpn = RPNExpression.from_infix(str)
+  calc = RPNParser.new("index.dat")
+
+  p calc.evaluate(rpn).sort
 end
-
-if File.exist? "index.dat"
-  @data = Marshal.load open("index.dat")
-else
-  raise "The index data file could not be located."
-end
-
-
-ARGV.join(' ').index_sanitize.each do |word|
-  @result ||= @data[word]
-  @result &= @data[word]
-end
-
-p @result
