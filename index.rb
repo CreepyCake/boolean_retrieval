@@ -1,5 +1,8 @@
+# encoding: utf-8
 require 'unicode'
 require 'nokogiri'
+require 'lingua/stemmer'
+
 class String
 
   #methods for enabling unicode downcase and upcase
@@ -43,6 +46,7 @@ class InvertedIndex
     @token_sum = token_sum
     @token_number = token_number
     @index_filename = index_filename
+    @stemmer = Lingua::Stemmer.new(:language => 'ru')
   end
 
   #if we already have an index file, than we can just reopen it
@@ -66,6 +70,7 @@ class InvertedIndex
           @token_sum += word.length
           @token_number += 1
           if !(word.include? '--') and (word != '')
+            word = @stemmer.stem(word)
             @data[word] ||= [] #we either have some record in hash with that key or we don't
             @data[word] << @doc_number unless @data[word].include? @doc_number #don't make record
                                                    # if we already met this word in this document
